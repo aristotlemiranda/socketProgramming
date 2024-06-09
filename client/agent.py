@@ -1,3 +1,5 @@
+import os
+import sys
 import socket
 import subprocess
 import json
@@ -5,7 +7,18 @@ import time
 import logging
 import threading
 
+# Path to the lock file
+LOCK_FILE_PATH = "agent.lock"
 
+# Check if the lock file exists
+if os.path.exists(LOCK_FILE_PATH):
+    print("Another instance is already running. Exiting.")
+    sys.exit(1)
+
+# Create the lock file
+open(LOCK_FILE_PATH, 'a').close()
+
+# Your SocketStreamer class
 class SocketStreamer:
     def __init__(self, host, port):
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -20,40 +33,7 @@ class SocketStreamer:
     def close(self):
         self.client_socket.close()
 
-'''
-def handle_command(command, streamer, logger, host, port):
-    try:
-        logger.debug(f"Executing command: {command}")
-        proc = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, bufsize=1, universal_newlines=True)
-        for line in iter(proc.stdout.readline, ''):
-            logger.info(line.strip())  # Log each output line
-            streamer.write(line)  # Send to the server without buffering
 
-        # No need to wait for the process to complete here
-
-        exit_code = proc.poll()  # Check if the process has terminated
-        while exit_code is None:
-            exit_code = proc.poll()  # Check again until process is terminated
-
-    except Exception as e:
-        exit_code = -1
-        logger.error(f"Error executing command: {e}")
-
-    response = {
-        "exit_code": exit_code,
-        "output": []  # Include command output in the response
-    }
-    response_message = json.dumps(response)
-
-    logger.debug(f"Sending response to the server: {response_message}")
-
-    # Send the response back to the server
-    response_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    response_socket.connect((host, port + 1))  # Assuming server listens on port+1 for responses
-    response_socket.sendall(response_message.encode('utf-8'))
-    response_socket.close()
-'''
 def handle_command(command, streamer, logger, host, port):
     try:
         logger.debug(f"Executing command: {command}")
@@ -87,7 +67,7 @@ def handle_command(command, streamer, logger, host, port):
     }
     response_message = json.dumps(response)
 
-    logger.debug(f"Sending response to the server: {response_message}")
+    logger.debug(f"Sending final response to the server: {response_message}")
 
     # Send the final response back to the server
     final_response_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -96,21 +76,34 @@ def handle_command(command, streamer, logger, host, port):
     final_response_socket.close()
 
 
-
 def start_client():
+    global client_socket
     logging.basicConfig(level=logging.DEBUG)  # Set logging level to DEBUG
     logger = logging.getLogger(__name__)
 
     host = '127.0.0.1'
     port = 9999
+    client_id = 'client_1234'  # Replace with the actual client ID
+    token = 'bf137c42-c6e3-4666-bcec-52956337b5e9'  # Replace with the actual token received during registration
 
     while True:
         try:
             client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             client_socket.connect((host, port))
-            streamer = SocketStreamer(host, port)
+
+            # Send client_id and token for validation
+            client_data = json.dumps({'client_id': client_id, 'token': token})
+            client_socket.send(client_data.encode('utf-8'))
+
+            response = client_socket.recv(1024).decode('utf-8')
+            if 'Connection accepted' not in response:
+                logger.error(f"Connection rejected: {response}")
+                client_socket.close()
+                break
 
             logger.debug("Client connected to the server.")
+
+            streamer = SocketStreamer(host, port)
 
             while True:
                 message = client_socket.recv(1024)
@@ -120,7 +113,7 @@ def start_client():
 
                     # Execute the command in a separate thread to stream output in real-time
                     command_thread = threading.Thread(target=handle_command,
-                                                       args=(command, streamer, logger, host, port))
+                                                      args=(command, streamer, logger, host, port))
                     command_thread.start()
                 else:
                     break
@@ -135,3 +128,6 @@ def start_client():
 
 if __name__ == "__main__":
     start_client()
+
+# Clean up: Remove the lock file when the script exits
+os.remove(LOCK_FILE_PATH)
