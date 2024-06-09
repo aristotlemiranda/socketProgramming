@@ -6,6 +6,14 @@ import json
 import time
 import logging
 import threading
+import atexit
+import signal
+
+try:
+    import keyboard
+except ImportError:
+    print("keyboard module is not installed. Install it using: pip install keyboard")
+    sys.exit(1)
 
 # Path to the lock file
 LOCK_FILE_PATH = "agent.lock"
@@ -18,7 +26,7 @@ if os.path.exists(LOCK_FILE_PATH):
 # Create the lock file
 open(LOCK_FILE_PATH, 'a').close()
 
-# Your SocketStreamer class
+
 class SocketStreamer:
     def __init__(self, host, port):
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -126,8 +134,37 @@ def start_client():
             client_socket.close()
 
 
+def cleanup():
+    # Clean up: Remove the lock file when the script exits
+    os.remove(LOCK_FILE_PATH)
+
+
+def signal_handler(sig, frame):
+    print("\nGracefully terminating...")
+    cleanup()
+    sys.exit(0)
+
+
+def keyboard_handler():
+    while True:
+        try:
+            keyboard.wait('ctrl+c')
+            print("\nGracefully terminating...")
+            cleanup()
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error occurred: {e}")
+
+
+# Register cleanup function to be called upon script exit
+atexit.register(cleanup)
+
+# Register signal handler for SIGINT (Ctrl+C)
+signal.signal(signal.SIGINT, signal_handler)
+
+# Start keyboard handler for Ctrl+Break
+keyboard_thread = threading.Thread(target=keyboard_handler)
+keyboard_thread.start()
+
 if __name__ == "__main__":
     start_client()
-
-# Clean up: Remove the lock file when the script exits
-os.remove(LOCK_FILE_PATH)
